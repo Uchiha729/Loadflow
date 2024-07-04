@@ -31,7 +31,7 @@ def main():
     # grid.loadflow()
     # grid.printResults()
 
-    file = 'data/case57.xlsx'
+    file = 'data/case14.xlsx'
     busData = pd.read_excel(file, sheet_name='busData')
     lineData = pd.read_excel(file, sheet_name='branchData')
     bnum = len(busData.axes[0])
@@ -60,7 +60,8 @@ def main():
 
     grid = Grid(nodes=nodes, lines=lines)
     start = time.time()
-    grid.NR()
+    # grid.NR()
+    grid.FDC()
     end = time.time()
     grid.printResults()
     print("\nTime taken: %f" % (end-start))

@@ -127,7 +127,7 @@ class Grid:
 
     @property
     def pq_nodes(self):
-        pq_nodes = [node for node in self.nodes if node.type == 3]
+        pq_nodes = [node for node in self.nodes if node.type == 1]
         return pq_nodes
 
     @property
@@ -174,7 +174,7 @@ class Grid:
             P = np.zeros((self.nb, 1), dtype=np.float64)
             Q = np.zeros((self.nb, 1), dtype=np.float64)
 
-            #calculate P and Q
+            # calculate P and Q
             for node in self.nodes:
                 i = node.nodeNumber
                 for k in range(self.nb):
@@ -192,21 +192,22 @@ class Grid:
                         elif QG > self.nodes[n].Qmax/BMva:
                             self.nodes[n].vLf -= 0.01
 
-            #calculate changes in specified active and reactive power
+            # calculate changes in specified active and reactive power
             dPa = Psp - P
             dQa = Qsp - Q
             k = 0
             dQ = np.zeros((npq, 1), dtype=np.float64)
             for node in self.pq_nodes:
                 i = node.nodeNumber
-                if node.type == 3:
+                if node.type == 1:
                     dQ[k] = dQa[i]
                     k += 1
             dP = dPa[1:self.nb]
             M = np.vstack((dP, dQ))
 
-            #calculate Jacobian. #
-            #J1 is the derivative of P with respect to angles
+            # calculate Jacobian. 
+            # J1 = H
+            # J1 is the derivative of P with respect to angles
             J1 = np.zeros((self.nb-1, self.nb-1), dtype=np.float64)
             for i in range(self.nb-1):
                 m = i + 1
@@ -220,7 +221,8 @@ class Grid:
                         J1[i,k] = self.nodes[m].vLf*self.nodes[n].vLf*(G[m,n]*np.sin(angles[m]-angles[n]) - B[m,n]*np.cos(angles[m]-angles[n]))
             self.J1 = J1
 
-            #J2 is the derivative of P with respect to V
+            # J2 = N
+            # J2 is the derivative of P with respect to V
             J2 = np.zeros((self.nb-1, npq), dtype=np.float64)
             for i in range(self.nb-1):
                 m = i + 1
@@ -234,8 +236,8 @@ class Grid:
                         J2[i,k] = self.nodes[m].vLf*(G[m,n]*np.cos(angles[m]-angles[n]) + B[m,n]*np.sin(angles[m]-angles[n]))
             self.J2 = J2
 
-
-            #J3 is the derivative of Q with respect to angles
+            # J3 = J
+            # J3 is the derivative of Q with respect to angles
             J3 = np.zeros((npq, self.nb-1), dtype=np.float64)
             for i in range(npq):
                 m = self.pq_nodes[i].nodeNumber
@@ -249,7 +251,8 @@ class Grid:
                         J3[i,k] = self.nodes[m].vLf*self.nodes[n].vLf*(-G[m,n]*np.cos(angles[m]-angles[n]) - B[m,n]*np.sin(angles[m]-angles[n]))
             self.J3 = J3
 
-            #J4 is the derivative of Q with respect to V
+            # J4 = L
+            # J4 is the derivative of Q with respect to V
             J4 = np.zeros((npq, npq), dtype=np.float64)
             for i in range(npq):
                 m = self.pq_nodes[i].nodeNumber
@@ -264,15 +267,15 @@ class Grid:
             self.J4 = J4
 
             self.J = np.vstack((np.hstack((J1, J2)), np.hstack((J3, J4))))
-            #end of Jacobian calculation
-            #J X = M -> X = J^-1 M
+            # end of Jacobian calculation
+            # J X = M -> X = J^-1 M
             X = np.linalg.solve(self.J, M)
             # X = solve(self.J, M)
             dTh = X[0:self.nb-1]
             dV = X[self.nb-1:]
 
-            #update Angles and Voltages
-            angles[1:] += dTh #angles[0] is the angle of the slack bus
+            # update Angles and Voltages
+            angles[1:] += dTh # angles[0] is the angle of the slack bus
             k=0
             for i in range(1, self.nb):
                 if self.nodes[i].type == 3:
@@ -284,20 +287,108 @@ class Grid:
             self.tolerances.append((tol))
             self.voltageLf = [self.nodes[i].vLf for i in range(self.nb)]
             self.thetaLf = [self.nodes[i].thetaLf for i in range(self.nb)]
-            flag = 0
-            for i in self.thetaLf:
-                if (np.isnan(i) and flag==0):
-                    flag=1
-                    print(self.iter)
-                    print(self.thetaLf)
+            # flag = 0
+            # for i in self.thetaLf:
+            #     if (np.isnan(i) and flag==0):
+            #         flag=1
+            #         print(self.iter)
+            #         print(self.thetaLf)
 
-        #the iteration is over, calculate the power flow possibly
+        # the iteration is over, calculate the power flow possibly
 
-    def FDLF(self, tol=1, maxIter=20, BMva=230):
-        pass
+    def FDC(self, tol=1, maxIter=10000, BMva=230):
+        self.iter = 0
+        Pg = self.Pg / BMva
+        Qg = self.Qg / BMva
+        Pl = self.Pl / BMva
+        Ql = self.Ql / BMva
+        Psp = self.Psp / BMva
+        Qsp = self.Qsp / BMva
+        G = np.real(self.Y)
+        B = np.imag(self.Y)
+        angles = np.zeros((self.nb,1), dtype=np.float64)
+        
+        self.tolerances = []
+
+        self.B_d = -1 * B[1:, 1:]
+
+        while self.iter < 20 or (tol > 1e-3 and self.iter < maxIter):
+            self.iter += 1
+            P = np.zeros((self.nb, 1))
+            Q = np.zeros((self.nb, 1))
+            npv = len(self.pv_nodes)
+            npq = len(self.pq_nodes)
+
+            # Calculate P and Q
+            for node in self.nodes:
+                i = node.nodeNumber
+                for k in range(self.nb):
+                    P[i] += node.vLf*self.nodes[k].vLf*(G[i, k]*np.cos(angles[i]-angles[k]) + B[i,k]*np.sin(angles[i]-angles[k]))
+                    Q[i] += node.vLf*self.nodes[k].vLf*(G[i, k]*np.sin(angles[i]-angles[k]) - B[i,k]*np.cos(angles[i]-angles[k]))
+            self.P = P
+
+            # Calculate Q-limit violations
+            if self.iter > 2 and self.iter <= 7:
+                for n in range(1, self.nb):
+                    if self.nodes[n].type == 2:
+                        QG = Q[n] + Ql[n]
+                        if QG < self.nodes[n].Qmin/BMva:
+                            self.nodes[n].vLf += 0.01
+                        elif QG > self.nodes[n].Qmax/BMva:
+                            self.nodes[n].vLf -= 0.01
+
+            # Calculate changes in specified active and reactive power
+            dPa = Psp - P
+            dQa = Qsp - Q
+            k = 0
+            dQ = np.zeros((npq, 1))
+            for node in self.pq_nodes:
+                i = node.nodeNumber
+                if node.type == 1:
+                    dQ[k] = dQa[i] / abs(node.vLf)
+                    k += 1
+            dP = dPa[1:self.nb]
+            V_ = np.vstack([node.vLf for node in self.nodes])
+            V_ = V_[1:self.nb]
+            for i in range(len(dP)):
+                dP[i] = dP[i] / abs(V_[i])
+
+            # M = np.vstack((dP, dQ))
+
+            # Calculate the B matrices
+            B_dd = self.B_d
+            for node in self.nodes:
+                i = node.nodeNumber
+                if node.type == 2:
+                    B_dd = np.delete(B_dd, i-2, 0)
+                    B_dd = np.delete(B_dd, i-2, 1)
+
+            self.B_dd = B_dd
+            # end of B matrices calculation
+            
+            # we solve two equations
+            # 1. B_d del_theta = dP
+            # 2. B_dd del_voltage = dQ
+
+            dTh = np.linalg.solve(self.B_d, dP)
+            dV = np.linalg.solve(self.B_dd, dQ)
+
+            angles[1:] += dTh
+            k=0
+            for i in range(1, self.nb):
+                if self.nodes == 3:
+                    self.nodes[i].vLf += dV[k].item()
+                    k += 1
+                self.nodes[i].thetaLf = angles[i].item()
+
+            tol = max(abs(np.vstack((dP, dQ))))
+            self.tolerances.append((tol))
+            self.voltageLf = [self.nodes[i].vLf for i in range(self.nb)]
+            self.thetaLf = [self.nodes[i].thetaLf for i in range(self.nb)]            
+
 
     def printResults(self):
-        print("Newton Raphson Results:")
+        print("Load Flow Analysis Results:")
         print()
         print('| Bus |    V     |  Angle   |')
         print('| No  |    pu    |  Degree  |')
